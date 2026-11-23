@@ -17,9 +17,12 @@
     #fill { width: 0; height: 100%; background: #d9b36a; transition: width 0.2s; }
     #msg { font-size: 12px; opacity: 0.6; }
     #err { position: fixed; left: 0; right: 0; top: 0; padding: 10px; background: #8a1d14; color: #fff; font: 13px sans-serif; display: none; pointer-events: none; }
-    #rotate { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 30px;
+    #rotate { position: fixed; inset: 0; display: none; flex-direction: column; gap: 18px; align-items: center; justify-content: center; text-align: center; padding: 30px;
       background: #0b0f16; color: #e8e2d4; font: 18px "Segoe UI", Roboto, sans-serif; z-index: 10; }
-    @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+    #rotate button { font: 700 17px "Segoe UI", Roboto, sans-serif; padding: 14px 34px; border: 0; border-radius: 6px; background: #d9b36a; color: #14110a; }
+    #rotate .alt { background: transparent; color: #e8e2d4; border: 1px solid rgba(255,255,255,0.3); font-weight: 400; font-size: 14px; padding: 10px 20px; }
+    #rotate small { opacity: 0.6; font-size: 13px; max-width: 300px; }
+    #note { max-width: min(420px, 86vw); text-align: center; font-size: 13px; line-height: 1.45; color: #f0d9a8; display: none; }
   </style>
 </head>
 <body>
@@ -29,14 +32,54 @@
     <h1>AGENT PAVLOV</h1>
     <div id="bar"><div id="fill"></div></div>
     <div id="msg">Loading...</div>
+    <div id="note"></div>
   </div>
   <div id="err"></div>
-  <div id="rotate">Turn your phone sideways (landscape) to play.</div>
+  <div id="rotate">
+    <div>The game plays sideways (landscape).</div>
+    <button id="rotate-go">Play</button>
+    <button id="rotate-stay" class="alt">Play in portrait anyway</button>
+    <small>Or turn your phone sideways. If it does not turn, switch off the rotation lock.</small>
+  </div>
   <script>
     const canvas = document.querySelector('#unity-canvas');
     const fill = document.querySelector('#fill');
     const msg = document.querySelector('#msg');
     const buildUrl = 'Build';
+    const note = document.querySelector('#note');
+    const showNote = (html) => { note.innerHTML = html; note.style.display = 'block'; };
+
+    // ---------- phones ----------
+    const ua = navigator.userAgent;
+    const touchDevice = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
+    // links opened inside Messenger / Viber / Instagram / Facebook etc. run in a weak built-in browser
+    const inApp = /FBAN|FBAV|FB_IAB|Instagram|Messenger|Line\/|Viber|MicroMessenger|Snapchat|musical_ly|TikTok|; wv\)/i.test(ua);
+    const openOutside = 'Open this link in <b>Chrome</b> or <b>Safari</b>: tap the <b>&#8942;</b> or <b>&hellip;</b> menu and choose <b>Open in browser</b>.';
+    const rotate = document.querySelector('#rotate');
+    let portraitOk = false;
+    // fullscreen + landscape lock where the browser allows it (Android Chrome); iPhones simply ignore it
+    const goLandscape = async () => {
+      try {
+        const el = document.documentElement;
+        if (el.requestFullscreen && !document.fullscreenElement) await el.requestFullscreen({ navigationUI: 'hide' });
+        if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+      } catch (e) { console.log('landscape:', String(e)); }
+    };
+    const checkRotate = () => { rotate.style.display = touchDevice && !portraitOk && innerHeight > innerWidth ? 'flex' : 'none'; };
+    addEventListener('resize', checkRotate);
+    addEventListener('orientationchange', () => setTimeout(checkRotate, 250));
+    document.querySelector('#rotate-go').addEventListener('click', () => {
+      goLandscape();   // not awaited: some browsers never settle the fullscreen promise
+      // could not turn (iPhone, rotation lock): play in portrait rather than block
+      setTimeout(() => { if (innerHeight > innerWidth) portraitOk = true; checkRotate(); }, 700);
+    });
+    document.querySelector('#rotate-stay').addEventListener('click', () => { portraitOk = true; checkRotate(); });
+    checkRotate();
+    // the first tap in the game on a phone also goes fullscreen / landscape (more room, no address bar)
+    if (touchDevice) canvas.addEventListener('touchend', () => { goLandscape(); }, { once: true });
+
+    // the game needs WebGL 2: say so clearly instead of showing a black screen
+    const webgl2 = (() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch (e) { return false; } })();
     // A refused pointer lock (focus change, iframe, automation) rejects a promise. Unity's loader turns any
     // uncaught error into a blocking alert() that freezes the game, so swallow these harmless ones first.
     // Registered before the loader script, so stopImmediatePropagation keeps them away from its handler.
@@ -103,9 +146,22 @@
       }).then((instance) => {
         window.unityInstance = instance;
         hideLoader('promise');
-      }).catch((e) => { msg.textContent = 'Error: ' + e; report({ error: String(e) }); });
+      }).catch((e) => {
+        msg.textContent = 'The game could not start on this device.';
+        showNote('Error: ' + String(e).replace(/</g, '&lt;').slice(0, 200) + '<br><br>' + (inApp ? openOutside : 'Try the latest Chrome, Safari or Firefox, and close other tabs to free memory.'));
+        report({ error: String(e) });
+      });
     };
-    document.body.appendChild(script);
+    if (!webgl2) {
+      msg.textContent = 'This browser cannot run the game (it needs WebGL 2).';
+      showNote(inApp ? openOutside : 'Open the link in the latest <b>Chrome</b>, <b>Safari</b> or <b>Firefox</b>. On an iPhone, update iOS to 15 or newer.');
+      report({ error: 'no webgl2' });
+    } else {
+      if (inApp) showNote('You opened the link inside an app. If the game does not start, ' + openOutside.charAt(0).toLowerCase() + openOutside.slice(1));
+      // slow mobile data: tell people it is still coming (about 18 MB the first time, cached after)
+      setTimeout(() => { if (!ready && !note.innerHTML) showNote('Still loading: the game is about 18 MB the first time, then it is cached. On mobile data this can take a minute.'); }, 20000);
+      document.body.appendChild(script);
+    }
     canvas.addEventListener('pointerdown', () => canvas.focus());
   </script>
 </body>
