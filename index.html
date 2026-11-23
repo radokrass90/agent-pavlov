@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Agent Pavlov - Operation Silent Cordon</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0f16; touch-action: none; -webkit-user-select: none; user-select: none; }
+    #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: #121a26; outline: none; }
+    #loader { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      font-family: "Segoe UI", Roboto, system-ui, sans-serif; color: #e8e2d4; background: radial-gradient(ellipse at 30% 20%, #26364a, #080b10); }
+    #loader h1 { margin: 0; font-size: 34px; letter-spacing: 8px; font-weight: 800; }
+    #loader .tag { color: #d9b36a; font-size: 12px; letter-spacing: 4px; }
+    #bar { width: min(320px, 70vw); height: 6px; background: rgba(255,255,255,0.12); }
+    #fill { width: 0; height: 100%; background: #d9b36a; transition: width 0.2s; }
+    #msg { font-size: 12px; opacity: 0.6; }
+    #err { position: fixed; left: 0; right: 0; top: 0; padding: 10px; background: #8a1d14; color: #fff; font: 13px sans-serif; display: none; pointer-events: none; }
+    #rotate { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 30px;
+      background: #0b0f16; color: #e8e2d4; font: 18px "Segoe UI", Roboto, sans-serif; z-index: 10; }
+    @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+  </style>
+</head>
+<body>
+  <canvas id="unity-canvas" tabindex="-1"></canvas>
+  <div id="loader">
+    <div class="tag">OPERATION SILENT CORDON</div>
+    <h1>AGENT PAVLOV</h1>
+    <div id="bar"><div id="fill"></div></div>
+    <div id="msg">Loading...</div>
+  </div>
+  <div id="err"></div>
+  <div id="rotate">Turn your phone sideways (landscape) to play.</div>
+  <script>
+    const canvas = document.querySelector('#unity-canvas');
+    const fill = document.querySelector('#fill');
+    const msg = document.querySelector('#msg');
+    const buildUrl = 'Build';
+    // A refused pointer lock (focus change, iframe, automation) rejects a promise. Unity's loader turns any
+    // uncaught error into a blocking alert() that freezes the game, so swallow these harmless ones first.
+    // Registered before the loader script, so stopImmediatePropagation keeps them away from its handler.
+    const harmless = (x) => /pointer ?lock|WrongDocumentError|requestPointerLock|exitPointerLock|extension:\/\//i.test(String(x && (x.stack || x.message || x.name) || x) + ' ' + String(x && x.name));
+    window.addEventListener('unhandledrejection', (e) => {
+      if (harmless(e.reason)) { console.log('ignored:', String(e.reason)); e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
+    window.addEventListener('error', (e) => {
+      if (harmless(e.error || e.message)) { console.log('ignored:', e.message); e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
+    const config = {
+      arguments: [],
+      dataUrl: buildUrl + '/agent-pavlov-web.data.unityweb',
+      frameworkUrl: buildUrl + '/agent-pavlov-web.framework.js.unityweb',
+      codeUrl: buildUrl + '/agent-pavlov-web.wasm.unityweb',
+      streamingAssetsUrl: 'StreamingAssets',
+      companyName: "MGTS",
+      productName: "Agent Pavlov",
+      productVersion: "1.0",
+      showBanner: (text, type) => {
+        // errors thrown by browser extensions (wallets etc.) are not ours: log them only
+        if (type === 'error' && !/extension:\/\/|ethereum|setExternalProvider/i.test(String(text))) {
+          const e = document.querySelector('#err'); e.textContent = text; e.style.display = 'block';
+          clearTimeout(window.__errT); window.__errT = setTimeout(() => { e.style.display = 'none'; }, 8000);
+        }
+        else console.log(text);
+      },
+    };
+    // Mobile: render at a lower resolution for speed
+    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+    // ?probe : report load stages and frame rate to the local server
+    const probe = location.search.includes('probe');
+    const T0 = performance.now();
+    const report = (o) => { if (probe) navigator.sendBeacon('/probe', JSON.stringify(Object.assign({ t: Math.round(performance.now() - T0) }, o))); };
+    if (probe) {
+      let frames = 0, last = performance.now();
+      const tick = () => { frames++; requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+      setInterval(() => {
+        const now = performance.now();
+        report({ fps: +(frames * 1000 / (now - last)).toFixed(1), vis: document.visibilityState, loaded: !!window.unityInstance, msg: msg.textContent });
+        frames = 0; last = now;
+      }, 3000);
+    }
+    // Remove the loading screen as soon as the game says it is running (GameManager.Start),
+    // without waiting for createUnityInstance to resolve (in some Chrome setups it resolves very late).
+    let ready = false;
+    const hideLoader = (why) => {
+      if (ready) return;
+      ready = true;
+      const l = document.querySelector('#loader');
+      if (l) l.remove();
+      canvas.focus();
+      report({ event: 'started', why });
+    };
+    window.pavlovReady = () => hideLoader('game');
+    const script = document.createElement('script');
+    script.src = buildUrl + '/agent-pavlov-web.loader.js';
+    script.onload = () => {
+      createUnityInstance(canvas, config, (p) => {
+        fill.style.width = Math.round(p * 100) + '%';
+        msg.textContent = p < 0.9 ? 'Loading ' + Math.round(p * 100) + '%' : 'Starting...';
+        if (p >= 1) setTimeout(() => hideLoader('timeout'), 8000);
+      }).then((instance) => {
+        window.unityInstance = instance;
+        hideLoader('promise');
+      }).catch((e) => { msg.textContent = 'Error: ' + e; report({ error: String(e) }); });
+    };
+    document.body.appendChild(script);
+    canvas.addEventListener('pointerdown', () => canvas.focus());
+  </script>
+</body>
+</html>
